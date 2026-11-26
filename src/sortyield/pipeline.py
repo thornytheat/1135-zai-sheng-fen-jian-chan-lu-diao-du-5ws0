@@ -18,9 +18,18 @@ def run(capacity=None):
     journal = weigh.read(DATA / "weighbridge_shift_north.csv", CUT)
     samples, orphans = sample.from_file(DATA / "conveyor_cut_tag_log.csv", journal.lots)
     history = model.read(DATA / "separated_material_yield_history.csv")
-    curves = model.per_polymer(history, FOLD, CUT.date())
+    in_use = {}
+    for lot in journal.lots:
+        in_use.setdefault(lot.material, set()).add(lot.line)
+    choices = model.select_methods(history, FOLD, CUT.date(), in_use)
+    curves = model.curves_for(history, FOLD, CUT.date(), choices)
     forecasts = tuple(
-        model.predict(lot, samples[lot.lot], curves.get(lot.material))
+        model.predict(
+            lot,
+            samples[lot.lot],
+            curves.get(lot.material),
+            choices[lot.material].method if lot.material in choices else None,
+        )
         for lot in journal.lots
     )
     classifications = grade.grade_batch(journal.lots, samples, forecasts)
@@ -70,7 +79,7 @@ def run(capacity=None):
         "stages": [
             weigh.evidence(journal),
             sample.evidence(samples, orphans),
-            model.evidence(curves, forecasts),
+            model.evidence(curves, forecasts, choices.values()),
             grade.evidence(classifications),
             {
                 **store.evidence(allocations),
